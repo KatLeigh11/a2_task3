@@ -1,0 +1,258 @@
+---
+title: "a2_task3_kat_leigh"
+author: "Kat Leigh"
+date: "2/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(ggplot2)
+library(jtools)
+library(ggfortify)
+library(broom)
+library(patchwork)
+library(scales)
+library(splitstackshape)
+
+```
+
+Tidy Tuesday Plastics
+
+```{r}
+# read in data
+
+plastics <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-01-26/plastics.csv') %>% 
+  clean_names() %>% 
+  mutate(parent_company = ifelse(parent_company == "#ERROR!", "Unbranded",
+                                 ifelse(parent_company == "null", "Unbranded",
+                                        ifelse(parent_company == "NULL", "Unbranded", parent_company)))) %>%
+  mutate(parent_company = tolower(parent_company),
+         country = tolower(country)) %>% 
+  filter(parent_company != "grand total") %>%
+  mutate(parent_company = as.factor(parent_company),
+         country = as.factor(country)) %>% 
+  droplevels() %>% ungroup() %>% drop_na()
+
+#find top companies
+
+top_comp <- plastics %>%
+  group_by(parent_company) %>% 
+  summarize(totalz = sum(grand_total)) %>% ungroup() %>% 
+  arrange(-totalz) %>% head(20)
+
+plastics_top_comp <- plastics %>%
+  group_by(parent_company, country) %>%
+  filter(parent_company %in% top_comp$parent_company) %>%
+  droplevels() %>% 
+  summarise(across(hdpe:volunteers, list(sum))) 
+  
+plastics_top_comp_gath <- plastics_top_comp %>% 
+  gather(key = "Type", value = "Count",
+         -country, -parent_company, -grand_total_1, -num_events_1, -volunteers_1) %>% 
+  mutate(Type = as.factor(Type)) %>% droplevels() %>%
+  mutate(pcnt_tot = (Count/grand_total_1)*100) %>% 
+  ungroup()
+
+plastics_top_comp_num <- plastics_top_comp %>% 
+  mutate(parent_company = as.numeric(parent_company))
+
+# test lm
+
+lm_test <- lm(parent_company ~ grand_total_1 + country + hdpe_1 + ldpe_1 + o_1 + pet_1 + pp_1 + ps_1 + pvc_1, data = plastics_top_comp_num)
+
+summary(lm_test)
+
+# predict
+
+predict_plastics <- lm_test %>% 
+  broom::augment(type.predict = "response")
+
+
+```
+```{r}
+# vizualize
+
+labz<- top_comp %>% 
+  arrange(totalz)
+
+ggplot(predict_plastics, aes(x = parent_company, y = .fitted))+
+  geom_point(aes(color = grand_total_1), show.legend = FALSE)+
+  geom_smooth(aes(color = grand_total_1), show.legend = FALSE)+
+  theme_minimal()+
+  coord_flip()+
+  scale_x_continuous(name = "Parent Company", breaks = seq(1,20,1), labels = labz$parent_company)
+
+#ggplot(plastics_top_comp, aes(x = parent_company, y = grand_total_1))+
+ # geom_point(aes(color = country), show.legend = FALSE)+
+#  geom_smooth(aes(color = country), show.legend = FALSE)+
+#  theme_minimal()
+```
+try PCA
+
+```{r}
+
+plastics_top_comp_numz <- plastics_top_comp %>%
+  mutate(parent_company = as.numeric(parent_company),
+         country = as.numeric(country)) %>% 
+  select(-volunteers_1, -num_events_1) %>% 
+  ungroup()
+
+plastics_pca <- plastics_top_comp_numz %>%
+  scale() %>%
+  prcomp()
+
+plastics_complete <- plastics_top_comp %>% 
+  select(-volunteers_1, -num_events_1) %>% 
+  ungroup()
+
+autoplot(plastics_pca,
+         data = plastics_complete,
+         loadings = TRUE,
+         colour = 'parent_company',
+         loadings.label = TRUE,
+         loadings.colour = "black",
+         loadings.label.colour = "black",
+         loadings.label.vjust = -0.5
+         ) +
+    theme_minimal()
+
+```
+make another graph on relationship between Type and company
+
+```{r}
+
+plastics_2 <- plastics %>% 
+  gather(key = "Type", value = "Count", -country, -year, -parent_company, -empty, -grand_total, -num_events, -volunteers) %>% 
+  select(-empty) %>% 
+  mutate(Type = as.factor(Type)) %>% 
+  filter(parent_company %in% top_comp$parent_company) %>%
+  droplevels() %>% ungroup()
+
+data_plot2_no_unb <- plastics_2 %>% 
+  filter(parent_company != "unbranded") %>% 
+  arrange(-grand_total)
+
+data_plot2_unb <- plastics_2 %>% 
+  filter(parent_company == "unbranded") %>% 
+  arrange(-grand_total)
+
+# by company
+
+plot2_corp <- ggplot(data = data_plot2_no_unb, aes(x = parent_company, y = Count))+
+  geom_col(aes(fill = Type))+
+  theme_minimal()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(face = "bold"))+
+  scale_y_continuous(labels = comma)+
+  coord_flip()+
+  facet_wrap(~year, scales = "free_x")+
+  scale_color_brewer(type = "qual")
+
+plot2_corp
+
+plot2un_corp <- ggplot(data = data_plot2_unb, aes(x = parent_company, y = Count))+
+  geom_col(aes(fill = Type), show.legend = FALSE)+
+  theme_minimal()+
+  theme(axis.title.y = element_blank(),
+        axis.text.x = element_text(face = "bold"),
+  strip.background = element_blank(),
+  strip.text.x = element_blank())+
+  coord_flip()+
+  facet_wrap(~year, scales = "free_x", )+
+  scale_color_brewer(type = "qual")+
+  scale_y_continuous(labels = comma)
+
+plot2un_corp
+
+plot2_corp / plot2un_corp +
+ plot_layout(heights = c(7, 1))
+```
+```{r}
+# by country
+
+top_country <- plastics %>%
+  group_by(country) %>% 
+  summarize(totalz = sum(grand_total)) %>% ungroup() %>% 
+  arrange(-totalz) %>% head(20)
+
+plastics_2_country <- plastics %>% 
+  gather(key = "Type", value = "Count", -country, -year, -parent_company, -empty, -grand_total, -num_events, -volunteers) %>% 
+  select(-empty) %>% 
+  mutate(Type = as.factor(Type)) %>% 
+  filter(country %in% top_country$country) %>%
+  droplevels() %>% ungroup()
+
+plast_per_event <- plastics_2_country %>% 
+  mutate(per_ev_count = Count/num_events,
+         per_ev_tot = grand_total/num_events)
+
+plot2 <- ggplot(data = plast_per_event, aes(x = country, y = per_ev_count))+
+  geom_col(aes(fill = Type))+
+  theme_minimal()+
+  theme(axis.title.x = element_blank(),
+        axis.text.x = element_text(face = "bold"))+
+  scale_y_continuous(labels = comma)+
+  coord_flip()+
+  facet_wrap(~year, scales = "free_x")+
+  scale_color_brewer(type = "qual")
+
+plot2
+
+```
+predit company based on types
+
+```{r}
+
+lm_test <- lm(parent_company ~ hdpe_1 + ldpe_1 + o_1 + pet_1 + pp_1 + ps_1 + pvc_1, data = plastics_top_comp_num)
+
+summary(lm_test)
+
+plot(lm_test)
+
+labz<- top_comp %>% 
+  arrange(totalz)
+
+ggplot(lm_test, aes(x = parent_company, y = .fitted))+
+  geom_point(aes(color = parent_company), show.legend = FALSE)+
+  geom_smooth(aes(color = parent_company), show.legend = FALSE)+
+  theme_minimal()+
+  coord_flip()+
+  scale_x_continuous(name = "Parent Company", breaks = seq(1,20,1), labels = labz$parent_company)+
+  scale_color_continuous(type = "viridis")
+
+
+```
+a longer version?
+```{r}
+
+longer_gathered <- plastics_top_comp_gath %>% 
+  group_by(parent_company, Type) %>% 
+  summarise(Count = sum(Count)) %>% ungroup()
+
+try_longer <- expandRows(longer_gathered, "Count") %>%
+  ungroup() %>% 
+  mutate(parent_company = as.numeric(parent_company))
+
+lm_test_long <- lm(parent_company ~ Type, data = try_longer)
+
+summary(lm_test_long)
+
+plot(lm_test_long)
+
+labz<- top_comp %>% 
+  arrange(totalz)
+
+labz2 <- as.data.frame(c("LDPE", "O", "PET", "PP", "PS","PVC"))
+
+ggplot(try_longer, aes(x = parent_company, y = Type))+
+  geom_point(aes(color = parent_company), show.legend = FALSE)+
+  geom_smooth(aes(color = parent_company), show.legend = FALSE)+
+  theme_minimal()+
+  coord_flip()
+
+```
