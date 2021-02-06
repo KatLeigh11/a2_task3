@@ -1,0 +1,213 @@
+---
+title: "a2_task3_kat_leigh"
+author: "Kat Leigh"
+date: "2/1/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(janitor)
+library(lubridate)
+library(ggplot2)
+library(jtools)
+library(ggfortify)
+library(broom)
+library(patchwork)
+library(scales)
+library(splitstackshape)
+library(stringi)
+
+```
+
+Tidy Tuesday Plastics
+
+```{r}
+# read in data
+
+plastics <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-01-26/plastics.csv') %>% 
+  clean_names() %>% distinct()
+
+plastics <- plastics %>% 
+  mutate(parent_company = ifelse(parent_company == "#ERROR!", "Unbranded",
+                                 ifelse(parent_company == "null", "Unbranded",
+                                        ifelse(parent_company == "NULL", "Unbranded",
+                                               ifelse(parent_company == "zott (germany)", "zott",
+                                                      ifelse(parent_company == "zost", "zott",
+                                                      ifelse(parent_company == "zydus wellness", "zydus",
+                                                             ifelse(parent_company == "colgate-palmolive", "colgate", parent_company)))))))) %>%
+  mutate(parent_company = tolower(parent_company),
+         country = tolower(country)) %>%
+  filter(parent_company != "grand total") %>%
+  mutate(parent_company = as.factor(parent_company),
+         country = as.factor(country)) %>% ungroup() %>% drop_na()
+
+plastics <- plastics %>% 
+  mutate(parent_company = as.factor(stri_trans_general(parent_company, id = "latin-ascii")),
+         country = as.factor(stri_trans_general(country, id = "latin-ascii"))) %>% 
+  group_by(country, parent_company) %>% 
+  summarise(grand_total = sum(grand_total)/sum(num_events),
+         hdpe = sum(hdpe)/sum(num_events),
+         ldpe = sum(ldpe)/sum(num_events),
+         o = sum(o)/sum(num_events),
+         pet = sum(pet)/sum(num_events),
+         pp = sum(pp)/sum(num_events),
+         ps = sum(ps)/sum(num_events),
+         pvc = sum(pvc)/sum(num_events)) %>% 
+  distinct()
+
+prop_per_ev_plastics <- plastics %>% 
+  mutate(hdpe = hdpe/grand_total,
+         ldpe = ldpe/grand_total,
+         o = o/grand_total,
+         pet = pet/grand_total,
+         pp = pp/grand_total,
+         ps = ps/grand_total,
+         pvc = pvc/grand_total)
+
+test <- ifelse(grep('colgate', prop_per_ev_plastics$parent_company), 'colgate', parent_company)
+
+#find top companies
+
+top_comp <- prop_per_ev_plastics %>%
+  group_by(parent_company) %>% 
+  summarize(totalz = sum(grand_total)) %>% ungroup() %>% 
+  arrange(-totalz) %>% head(20)
+
+plastics_top_comp <- prop_per_ev_plastics %>%
+  filter(parent_company %in% top_comp$parent_company)
+  
+plastics_top_comp_gath <- plastics_top_comp %>%
+  group_by(parent_company, country) %>% 
+  pivot_longer(cols = c(hdpe:pvc), names_to = "Type", values_to = "Value")
+```
+
+```{r}
+
+# lm to see if parent company can be predicted by a total, country, and type of plastic
+
+lm_test_h <- lm(hdpe ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_hdpe <- broom::tidy(lm_test_h) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "hdpe")
+
+lm_test_l <- lm(ldpe ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_ldpe <- broom::tidy(lm_test_l) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "ldpe")
+
+lm_test_o <- lm(o ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_o <- broom::tidy(lm_test_o) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "o")
+
+lm_test_pet <- lm(pet ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_pet <- broom::tidy(lm_test_pet) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "pet")
+
+lm_test_pp <- lm(pp ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_pp <- broom::tidy(lm_test_pp) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "pp")
+
+lm_test_ps <- lm(ps ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_ps <- broom::tidy(lm_test_ps) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "ps")
+
+lm_test_pvc <- lm(pvc ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_pvc <- broom::tidy(lm_test_pvc) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "pvc")
+
+# combine all the lm_tidy outputs
+
+combo <- rbind(lm_tidy_hdpe, lm_tidy_ldpe, lm_tidy_o, lm_tidy_pet, lm_tidy_pp, lm_tidy_ps, lm_tidy_pvc)
+
+# predict
+
+predict_companies_hdpe <-  lm_test_h%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = hdpe) %>% 
+  mutate(type = "hdpe") %>% 
+  select(-hdpe)
+
+predict_companies_ldpe <-  lm_test_l%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = ldpe) %>% 
+  mutate(type = "ldpe") %>% 
+  select(-ldpe)
+
+predict_companies_o <-  lm_test_o%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = o) %>% 
+  mutate(type = "o") %>% 
+  select(-o)
+
+predict_companies_pet <-  lm_test_pet%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = pet) %>% 
+  mutate(type = "pet") %>% 
+  select(-pet)
+
+predict_companies_pp <-  lm_test_pp%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = pp) %>% 
+  mutate(type = "pp") %>% 
+  select(-pp)
+
+predict_companies_ps <-  lm_test_ps%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = ps) %>% 
+  mutate(type = "ps") %>% 
+  select(-ps)
+
+predict_companies_pvc <-  lm_test_pvc%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = pvc) %>% 
+  mutate(type = "pvc") %>% 
+  select(-pvc)
+
+# combo plastic predictions
+
+combo_pred <- rbind(predict_companies_hdpe, predict_companies_ldpe, predict_companies_o, predict_companies_pet, predict_companies_pp, predict_companies_ps, predict_companies_pvc) %>% mutate(orig_val= ifelse(orig_val == 1, .99999999, orig_val),
+           .fitted = ifelse(.fitted == 1, .99999999, .fitted),
+           orig_val= ifelse(orig_val == 0, .00000001, orig_val),
+           .fitted = ifelse(.fitted == 1, .00000001, .fitted))
+
+#combo_pred <- combo_pred %>%
+#  pivot_longer(cols = c(orig_val, .fitted), values_to = "orig_fit")
+
+```
+
+```{r}
+# vizualize
+
+labz<- top_comp %>% 
+  arrange(totalz)
+
+ggplot()+
+  geom_point(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE)+
+  geom_smooth(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE, na.rm = TRUE)+
+  #geom_line(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE)+
+  theme_minimal()
+
+
+
+#ggplot(plastics_top_comp, aes(x = parent_company, y = grand_total_1))+
+ # geom_point(aes(color = country), show.legend = FALSE)+
+#  geom_smooth(aes(color = country), show.legend = FALSE)+
+#  theme_minimal()
+
+
+```

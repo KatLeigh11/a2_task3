@@ -18,6 +18,7 @@ library(broom)
 library(patchwork)
 library(scales)
 library(splitstackshape)
+library(stringi)
 
 ```
 
@@ -32,20 +33,43 @@ plastics <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/t
                                  ifelse(parent_company == "null", "Unbranded",
                                         ifelse(parent_company == "NULL", "Unbranded", parent_company)))) %>%
   mutate(parent_company = tolower(parent_company),
-         country = tolower(country)) %>% 
+         country = tolower(country)) %>%
   filter(parent_company != "grand total") %>%
   mutate(parent_company = as.factor(parent_company),
          country = as.factor(country)) %>% 
   droplevels() %>% ungroup() %>% drop_na()
 
+plastics <- plastics %>% 
+  mutate(parent_company = stri_trans_general(parent_company, id = "latin-ascii"),
+         country = stri_trans_general(country, id = "latin-ascii"))
+
+per_event_plastics <- plastics %>% 
+  mutate(grand_total = grand_total/num_events,
+         hdpe = hdpe/num_events,
+         ldpe = ldpe/num_events,
+         o = o/num_events,
+         pet = pet/num_events,
+         pp = pp/num_events,
+         ps = ps/num_events,
+         pvc = pvc/num_events)
+
+prop_per_ev_plastics <- per_event_plastics %>% 
+  mutate(hdpe = hdpe/grand_total,
+         ldpe = ldpe/grand_total,
+         o = o/grand_total,
+         pet = pet/grand_total,
+         pp = pp/grand_total,
+         ps = ps/grand_total,
+         pvc = pvc/grand_total)
+
 #find top companies
 
-top_comp <- plastics %>%
+top_comp <- prop_per_ev_plastics %>%
   group_by(parent_company) %>% 
   summarize(totalz = sum(grand_total)) %>% ungroup() %>% 
   arrange(-totalz) %>% head(20)
 
-plastics_top_comp <- plastics %>%
+plastics_top_comp <- prop_per_ev_plastics %>%
   group_by(parent_company, country) %>%
   filter(parent_company %in% top_comp$parent_company) %>%
   droplevels() %>% 
@@ -58,39 +82,127 @@ plastics_top_comp_gath <- plastics_top_comp %>%
   mutate(pcnt_tot = (Count/grand_total_1)*100) %>% 
   ungroup()
 
-plastics_top_comp_num <- plastics_top_comp %>% 
-  mutate(parent_company = as.numeric(parent_company))
+# lm to see if parent company can be predicted by a total, country, and type of plastic
 
-# test lm
+lm_test_h <- lm(hdpe_1 ~ parent_company + country, data = plastics_top_comp)
 
-lm_test <- lm(parent_company ~ grand_total_1 + country + hdpe_1 + ldpe_1 + o_1 + pet_1 + pp_1 + ps_1 + pvc_1, data = plastics_top_comp_num)
+lm_tidy_hdpe <- broom::tidy(lm_test_h) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "hdpe")
 
-summary(lm_test)
+lm_test_l <- lm(ldpe_1 ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_ldpe <- broom::tidy(lm_test_l) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "ldpe")
+
+lm_test_o <- lm(o_1 ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_o <- broom::tidy(lm_test_o) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "o")
+
+lm_test_pet <- lm(pet_1 ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_pet <- broom::tidy(lm_test_pet) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "pet")
+
+lm_test_pp <- lm(pp_1 ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_pp <- broom::tidy(lm_test_pp) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "pp")
+
+lm_test_ps <- lm(ps_1 ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_ps <- broom::tidy(lm_test_ps) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "ps")
+
+lm_test_pvc <- lm(pvc_1 ~ parent_company + country, data = plastics_top_comp)
+
+lm_tidy_pvc <- broom::tidy(lm_test_pvc) %>% 
+  mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
+  mutate(Type = "pvc")
+
+# combine all the lm_tidy outputs
+
+combo <- rbind(lm_tidy_hdpe, lm_tidy_ldpe, lm_tidy_o, lm_tidy_pet, lm_tidy_pp, lm_tidy_ps, lm_tidy_pvc)
 
 # predict
 
-predict_plastics <- lm_test %>% 
-  broom::augment(type.predict = "response")
+predict_companies_hdpe <-  lm_test_h%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = hdpe_1) %>% 
+  mutate(type = "hdpe") %>% 
+  select(-hdpe_1)
 
+predict_companies_ldpe <-  lm_test_l%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = ldpe_1) %>% 
+  mutate(type = "ldpe") %>% 
+  select(-ldpe_1)
+
+predict_companies_o <-  lm_test_o%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = o_1) %>% 
+  mutate(type = "o") %>% 
+  select(-o_1)
+
+predict_companies_pet <-  lm_test_pet%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = pet_1) %>% 
+  mutate(type = "pet") %>% 
+  select(-pet_1)
+
+predict_companies_pp <-  lm_test_pp%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = pp_1) %>% 
+  mutate(type = "pp") %>% 
+  select(-pp_1)
+
+predict_companies_ps <-  lm_test_ps%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = ps_1) %>% 
+  mutate(type = "ps") %>% 
+  select(-ps_1)
+
+predict_companies_pvc <-  lm_test_pvc%>% 
+  broom::augment(type.predict = "response") %>% 
+  mutate(orig_val = pvc_1) %>% 
+  mutate(type = "pvc") %>% 
+  select(-pvc_1)
+
+# combo plastic predictions
+
+combo_pred <- rbind(predict_companies_hdpe, predict_companies_ldpe, predict_companies_o, predict_companies_pet, predict_companies_pp, predict_companies_ps, predict_companies_pvc)
+
+#combo_pred <- combo_pred %>%
+#  pivot_longer(cols = c(orig_val, .fitted), values_to = "orig_fit")
 
 ```
+
 ```{r}
 # vizualize
 
 labz<- top_comp %>% 
   arrange(totalz)
 
-ggplot(predict_plastics, aes(x = parent_company, y = .fitted))+
-  geom_point(aes(color = grand_total_1), show.legend = FALSE)+
-  geom_smooth(aes(color = grand_total_1), show.legend = FALSE)+
-  theme_minimal()+
-  coord_flip()+
-  scale_x_continuous(name = "Parent Company", breaks = seq(1,20,1), labels = labz$parent_company)
+ggplot()+
+  geom_point(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE)+
+  geom_smooth(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE, na.rm = TRUE)+
+  theme_minimal()
+
+
 
 #ggplot(plastics_top_comp, aes(x = parent_company, y = grand_total_1))+
  # geom_point(aes(color = country), show.legend = FALSE)+
 #  geom_smooth(aes(color = country), show.legend = FALSE)+
 #  theme_minimal()
+
+?geom_smooth
+
 ```
 try PCA
 
@@ -212,18 +324,21 @@ lm_test <- lm(parent_company ~ hdpe_1 + ldpe_1 + o_1 + pet_1 + pp_1 + ps_1 + pvc
 
 summary(lm_test)
 
+pred_lm_test <- lm_test %>% 
+  broom::augment(type.predict = "response") %>% 
+  pivot_longer(cols = hdpe_1:pvc_1, names_to = 'Type')
+
 plot(lm_test)
 
 labz<- top_comp %>% 
   arrange(totalz)
 
-ggplot(lm_test, aes(x = parent_company, y = .fitted))+
-  geom_point(aes(color = parent_company), show.legend = FALSE)+
-  geom_smooth(aes(color = parent_company), show.legend = FALSE)+
+ggplot(pred_lm_test)+
+  geom_violin(aes(x = parent_company, y = Type), color = 'black', show.legend = FALSE)+
+  geom_violin(aes(x = .fitted, y = Type), color = 'magenta', show.legend = FALSE)+
   theme_minimal()+
   coord_flip()+
-  scale_x_continuous(name = "Parent Company", breaks = seq(1,20,1), labels = labz$parent_company)+
-  scale_color_continuous(type = "viridis")
+  scale_x_continuous(name = "Parent Company", breaks = seq(1,20,1), labels = labz$parent_company)
 
 
 ```
@@ -242,6 +357,13 @@ lm_test_long <- lm(parent_company ~ Type, data = try_longer)
 
 summary(lm_test_long)
 
+lm_test_long_pred <- lm_test %>% 
+  broom::augment(type.predict = "response")
+
+longer_lm_test_pred <- lm_test_long_pred %>%
+  pivot_longer(cols = hdpe_1:pvc_1, names_to = "Type") %>% 
+  mutate(value = ifelse(value == 0, NA, value))
+  
 plot(lm_test_long)
 
 labz<- top_comp %>% 
@@ -249,9 +371,9 @@ labz<- top_comp %>%
 
 labz2 <- as.data.frame(c("LDPE", "O", "PET", "PP", "PS","PVC"))
 
-ggplot(try_longer, aes(x = parent_company, y = Type))+
-  geom_point(aes(color = parent_company), show.legend = FALSE)+
-  geom_smooth(aes(color = parent_company), show.legend = FALSE)+
+ggplot(longer_lm_test_pred)+
+  geom_violin(aes(x = parent_company, y = Type), color = 'black', show.legend = FALSE)+
+  geom_violin(aes(x = .fitted, y = Type), color = 'orange', show.legend = FALSE)+
   theme_minimal()+
   coord_flip()
 
