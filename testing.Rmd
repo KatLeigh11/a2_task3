@@ -30,23 +30,30 @@ Tidy Tuesday Plastics
 plastics <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-01-26/plastics.csv') %>% 
   clean_names() %>% distinct()
 
-plastics <- plastics %>% 
-  mutate(parent_company = ifelse(parent_company == "#ERROR!", "Unbranded",
-                                 ifelse(parent_company == "null", "Unbranded",
-                                        ifelse(parent_company == "NULL", "Unbranded",
-                                               ifelse(parent_company == "zott (germany)", "zott",
-                                                      ifelse(parent_company == "zost", "zott",
-                                                      ifelse(parent_company == "zydus wellness", "zydus",
-                                                             ifelse(parent_company == "colgate-palmolive", "colgate", parent_company)))))))) %>%
+plastics <- plastics %>%
   mutate(parent_company = tolower(parent_company),
-         country = tolower(country)) %>%
+         country = tolower(country)) %>% 
+  mutate(parent_company = stri_trans_general(parent_company, id = "latin-ascii"),
+         country = stri_trans_general(country, id = "latin-ascii")) %>%
+  mutate(parent_company = case_when(str_detect(parent_company, c('#error!', 'error!', 'null')) ~ 'unbranded',
+                          str_detect(parent_company, c('zott (germany)', 'zost')) ~ 'zott',
+                          str_detect(parent_company, c('zydus wellness')) ~ 'zydus',
+                          str_detect(parent_company, c('colgate-palmolive', 'colgate palmolive')) ~ 'colgate',
+                          str_detect(parent_company, c('zydus wellness')) ~ 'zydus',
+                          str_detect(parent_company, c('^foods ltd')) ~ 'a & p foods ltd',
+                          str_detect(parent_company, c('^a mild', 'a mild^')) ~ 'a mild',
+                          str_detect(parent_company, c('a1 chips^')) ~ 'a1',
+                          str_detect(parent_company, c('abc kecap^')) ~ 'abc kecap',
+                          str_detect(parent_company, c('kopi susu^')) ~ 'kopi susu',
+                          str_detect(parent_company, c('absolute^')) ~ 'absolute manufacturing',
+str_detect(parent_company, c('acecook^', 'acebook^')) ~ 'ace cook',
+str_detect(parent_company, c('agua de las^')) ~ 'agua de las misiones',
+                          TRUE ~ parent_company)) %>% 
   filter(parent_company != "grand total") %>%
   mutate(parent_company = as.factor(parent_company),
          country = as.factor(country)) %>% ungroup() %>% drop_na()
 
 plastics <- plastics %>% 
-  mutate(parent_company = as.factor(stri_trans_general(parent_company, id = "latin-ascii")),
-         country = as.factor(stri_trans_general(country, id = "latin-ascii"))) %>% 
   group_by(country, parent_company) %>% 
   summarise(grand_total = sum(grand_total)/sum(num_events),
          hdpe = sum(hdpe)/sum(num_events),
@@ -66,8 +73,6 @@ prop_per_ev_plastics <- plastics %>%
          pp = pp/grand_total,
          ps = ps/grand_total,
          pvc = pvc/grand_total)
-
-test <- ifelse(grep('colgate', prop_per_ev_plastics$parent_company), 'colgate', parent_company)
 
 #find top companies
 
@@ -130,6 +135,29 @@ lm_tidy_pvc <- broom::tidy(lm_test_pvc) %>%
   mutate(maybe_significant = ifelse(p.value < 0.05, "YES", "NO")) %>% 
   mutate(Type = "pvc")
 
+# get r-squared values for each model
+
+summary_tidy_hpde <- summary(lm_test_h)
+r_sqrd_hpde <- round(summary_tidy_hpde$r.squared, 3)
+
+summary_tidy_lpde <- summary(lm_test_l)
+r_sqrd_lpde <- round(summary_tidy_lpde$r.squared, 3)
+
+summary_tidy_o <- summary(lm_test_o)
+r_sqrd_o <- round(summary_tidy_o$r.squared, 3)
+
+summary_tidy_pet <- summary(lm_test_pet)
+r_sqrd_pet <- round(summary_tidy_pet$r.squared, 3)
+
+summary_tidy_pp <- summary(lm_test_pp)
+r_sqrd_pp <- round(summary_tidy_pp$r.squared, 3)
+
+summary_tidy_ps <- summary(lm_test_ps)
+r_sqrd_ps <- round(summary_tidy_ps$r.squared, 3)
+
+summary_tidy_pvc <- summary(lm_test_pvc)
+r_sqrd_pvc <- round(summary_tidy_pvc$r.squared, 3)
+
 # combine all the lm_tidy outputs
 
 combo <- rbind(lm_tidy_hdpe, lm_tidy_ldpe, lm_tidy_o, lm_tidy_pet, lm_tidy_pp, lm_tidy_ps, lm_tidy_pvc)
@@ -180,10 +208,19 @@ predict_companies_pvc <-  lm_test_pvc%>%
 
 # combo plastic predictions
 
-combo_pred <- rbind(predict_companies_hdpe, predict_companies_ldpe, predict_companies_o, predict_companies_pet, predict_companies_pp, predict_companies_ps, predict_companies_pvc) %>% mutate(orig_val= ifelse(orig_val == 1, .99999999, orig_val),
-           .fitted = ifelse(.fitted == 1, .99999999, .fitted),
-           orig_val= ifelse(orig_val == 0, .00000001, orig_val),
-           .fitted = ifelse(.fitted == 1, .00000001, .fitted))
+combo_pred <- rbind(predict_companies_hdpe, predict_companies_ldpe, predict_companies_o, predict_companies_pet, predict_companies_pp, predict_companies_ps, predict_companies_pvc) %>%   # mutate(orig_val= ifelse(orig_val == 1, .99999999, orig_val),
+ #          .fitted = ifelse(.fitted == 1, .99999999, .fitted),
+  #         orig_val= ifelse(orig_val == 0, .00000001, orig_val),
+   #        .fitted = ifelse(.fitted == 1, .00000001, .fitted)) 
+  drop_na() %>% 
+  mutate(type = case_when(str_detect(type, 'hdpe') ~ 'hdpe R\u00B2: 0.316',
+                          str_detect(type, 'ldpe') ~ 'ldpe R\u00B2: 0.443',
+                          str_detect(type, 'o') ~ 'o R\u00B2: 0.546',
+                          str_detect(type, 'pet') ~ 'pet R\u00B2: 0.648',
+                          str_detect(type, 'pp') ~ 'pp R\u00B2: 0.448',
+                          str_detect(type, 'ps')~ 'ps R\u00B2: 0.345',
+                          str_detect(type, 'pvc') ~ 'pvc R\u00B2: 0.694'
+                          ))
 
 #combo_pred <- combo_pred %>%
 #  pivot_longer(cols = c(orig_val, .fitted), values_to = "orig_fit")
@@ -197,10 +234,15 @@ labz<- top_comp %>%
   arrange(totalz)
 
 ggplot()+
-  geom_point(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE)+
-  geom_smooth(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE, na.rm = TRUE)+
+  geom_point(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), alpha = .3, show.legend = FALSE)+
+  geom_smooth(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), na.rm = TRUE, method = 'lm')+
   #geom_line(data = combo_pred, aes(x= orig_val, y= .fitted, color = type), show.legend = FALSE)+
-  theme_minimal()
+  theme_minimal()+
+  labs(title= "Actual versus predicted proportion of total plastic counts per type of plastic",
+       caption= str_wrap("A linear model was run to see how well knowledge of the country where the plastic was found and the company that produced it could predict the proportion of each type of plastic found during a single clean up event. Raw totals of each type of plastic per company, per country were divided by the number of events that took place in that country to get the average of each type per event. Then, each type was divided by the country-company per event grand total to obtain the proportion of each type found per event. The model is thus: lm([plastic type] ~ [parent company] + [country collected]). The actual proportion of each type of plastic is shown on the x axis, and the predicted proportion is shown on the y. The R-squared values for each type's linear model are shown as well.", 100),
+       x= "Actual Proportion of Total",
+       y= "Predicted Proportion of Total")
+  
 
 
 
